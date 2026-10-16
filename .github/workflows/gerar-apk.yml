@@ -12,9 +12,9 @@ jobs:
   compilar:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -22,7 +22,23 @@ jobs:
       - name: Compilar o aplicativo
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease bundleRelease
+          set -o pipefail
+          ./gradlew --no-daemon --stacktrace assembleRelease bundleRelease 2>&1 | tee build.log
+
+      - name: Mostrar o motivo do erro
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          t = open('build.log', errors='replace').read()
+          linhas = [l for l in t.splitlines() if ('error' in l.lower() or 'e: ' in l or 'failed' in l.lower()) and 'warning' not in l.lower()]
+          i = t.find('What went wrong')
+          trecho = t[max(0, i - 100): i + 2500] if i >= 0 else t[-2500:]
+          def anota(titulo, texto):
+              texto = texto.replace('%', '%25').replace('\r', '').replace('\n', '%0A')
+              print('::error title=' + titulo + '::' + texto[:6000])
+          anota('O que deu errado', trecho)
+          anota('Linhas com erro', '\n'.join(linhas[:60]))
+          PY
 
       - name: Separar os arquivos
         run: |
