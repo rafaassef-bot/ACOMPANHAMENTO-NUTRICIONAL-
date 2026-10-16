@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="fundo">#F3F6F4</color>
+    <color name="marca">#4F7F6C</color>
+    <color name="verde_logo">#5F8978</color>
+    <color name="icone_fundo">#FFFFFF</color>
+</resources>

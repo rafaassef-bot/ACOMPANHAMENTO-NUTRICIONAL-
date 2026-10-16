@@ -1,0 +1,56 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Chave de assinatura: lida de keystore.properties (na raiz do projeto).
+def assinatura = new Properties()
+def arquivoAssinatura = rootProject.file('keystore.properties')
+if (arquivoAssinatura.exists()) {
+    arquivoAssinatura.withInputStream { assinatura.load(it) }
+}
+// Cada compilação no GitHub ganha um número de versão maior, para instalar por cima da anterior.
+def numeroVersao = (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+
+android {
+    namespace 'br.com.rafaelassef.acompanhamento'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'br.com.rafaelassef.acompanhamento'
+        minSdk 24
+        targetSdk 36
+        versionCode numeroVersao
+        versionName "1.0.${numeroVersao}"
+    }
+
+    signingConfigs {
+        release {
+            if (assinatura['storeFile']) {
+                storeFile file(assinatura['storeFile'])
+                storePassword assinatura['storePassword']
+                keyAlias assinatura['keyAlias']
+                keyPassword assinatura['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (assinatura['storeFile']) signingConfig signingConfigs.release
+        }
+        debug {
+            if (assinatura['storeFile']) signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.webkit:webkit:1.12.1'
+}

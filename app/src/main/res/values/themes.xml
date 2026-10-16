@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Acompanhamento" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/marca</item>
+        <item name="colorAccent">@color/marca</item>
+        <item name="android:windowBackground">@color/fundo</item>
+    </style>
+</resources>

@@ -1,0 +1,44 @@
+name: Gerar APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compilar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Compilar o aplicativo
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease bundleRelease
+
+      - name: Separar os arquivos
+        run: |
+          mkdir -p saida
+          cp app/build/outputs/apk/release/app-release.apk "saida/AcompanhamentoNutricional-${{ github.run_number }}.apk"
+          cp app/build/outputs/bundle/release/app-release.aab "saida/AcompanhamentoNutricional-${{ github.run_number }}-PlayStore.aab"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AcompanhamentoNutricional-${{ github.run_number }}
+          path: saida/*
+
+      - name: Publicar para download no celular
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "versao-${{ github.run_number }}" saida/* \
+            --title "Acompanhamento Nutricional - versão ${{ github.run_number }}" \
+            --notes "No celular, toque no arquivo .apk para baixar e instalar. O arquivo .aab é só para enviar à Play Store."
