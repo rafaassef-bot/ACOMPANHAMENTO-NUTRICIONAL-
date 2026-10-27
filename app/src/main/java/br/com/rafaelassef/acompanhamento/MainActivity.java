@@ -6,6 +6,7 @@ import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.AtomicFile;
+import android.util.Base64;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -21,6 +22,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
@@ -50,6 +52,7 @@ public class MainActivity extends AppCompatActivity {
     private WebView web;
     private ValueCallback<Uri[]> retornoArquivo;
     private String backupPendente;
+    private byte[] pdfPendente;
 
     /** Escolher um arquivo de backup para importar. */
     private final ActivityResultLauncher<Intent> escolherArquivo = registerForActivityResult(
@@ -76,6 +79,25 @@ public class MainActivity extends AppCompatActivity {
                 }
                 backupPendente = null;
                 executarJs("window.__backupResult && window.__backupResult('" + resultado + "')");
+            });
+
+    /** Salvar o relatório em PDF onde o usuário escolher. */
+    private final ActivityResultLauncher<String> salvarPdf = registerForActivityResult(
+            new ActivityResultContracts.CreateDocument("application/pdf"), uri -> {
+                String resultado;
+                if (uri == null) {
+                    resultado = "cancel";
+                } else {
+                    resultado = "erro";
+                    try (OutputStream os = getContentResolver().openOutputStream(uri)) {
+                        if (os != null && pdfPendente != null) {
+                            os.write(pdfPendente);
+                            resultado = "ok";
+                        }
+                    } catch (Exception ignored) { }
+                }
+                pdfPendente = null;
+                executarJs("window.__pdfResult && window.__pdfResult('" + resultado + "')");
             });
 
     @Override
@@ -243,6 +265,53 @@ public class MainActivity extends AppCompatActivity {
                     return false;
                 }
             }
+        }
+
+        /** Abre o compartilhamento do Android (WhatsApp, e-mail...) com o relatório em PDF. */
+        @JavascriptInterface
+        public void sharePdf(String nomeArquivo, String base64) {
+            runOnUiThread(() -> {
+                try {
+                    byte[] dados = Base64.decode(base64, Base64.DEFAULT);
+                    File pasta = new File(getCacheDir(), "relatorios");
+                    if (!pasta.exists() && !pasta.mkdirs()) throw new IllegalStateException("pasta");
+                    File[] antigos = pasta.listFiles();
+                    if (antigos != null) for (File f : antigos) f.delete();
+                    File arquivo = new File(pasta, nomeArquivo.replaceAll("[^A-Za-z0-9._-]", "_"));
+                    try (FileOutputStream out = new FileOutputStream(arquivo)) {
+                        out.write(dados);
+                    }
+                    Uri uri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".arquivos", arquivo);
+                    Intent enviar = new Intent(Intent.ACTION_SEND);
+                    enviar.setType("application/pdf");
+                    enviar.putExtra(Intent.EXTRA_STREAM, uri);
+                    enviar.putExtra(Intent.EXTRA_SUBJECT, "Relatório de evolução nutricional");
+                    enviar.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    startActivity(Intent.createChooser(enviar, "Enviar relatório"));
+                    executarJs("window.__pdfResult && window.__pdfResult('ok')");
+                } catch (Exception e) {
+                    executarJs("window.__pdfResult && window.__pdfResult('erro')");
+                }
+            });
+        }
+
+        /** Abre a tela do Android para escolher onde salvar o relatório em PDF. */
+        @JavascriptInterface
+        public void savePdf(String nomeArquivo, String base64) {
+            try {
+                pdfPendente = Base64.decode(base64, Base64.DEFAULT);
+            } catch (Exception e) {
+                executarJs("window.__pdfResult && window.__pdfResult('erro')");
+                return;
+            }
+            runOnUiThread(() -> {
+                try {
+                    salvarPdf.launch(nomeArquivo);
+                } catch (ActivityNotFoundException e) {
+                    pdfPendente = null;
+                    executarJs("window.__pdfResult && window.__pdfResult('erro')");
+                }
+            });
         }
 
         /** Abre a tela do Android para escolher onde salvar o arquivo de backup. */
