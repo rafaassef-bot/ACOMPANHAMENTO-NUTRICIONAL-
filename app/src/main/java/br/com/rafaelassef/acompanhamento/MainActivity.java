@@ -1,10 +1,12 @@
 package br.com.rafaelassef.acompanhamento;
 
 import android.content.ActivityNotFoundException;
+import android.content.ClipData;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.MediaStore;
 import android.util.AtomicFile;
 import android.util.Base64;
 import android.webkit.JavascriptInterface;
@@ -53,13 +55,22 @@ public class MainActivity extends AppCompatActivity {
     private ValueCallback<Uri[]> retornoArquivo;
     private String backupPendente;
     private byte[] pdfPendente;
+    private Uri fotoCamera;
+    private File fotoCameraArquivo;
 
     /** Escolher um arquivo de backup para importar. */
     private final ActivityResultLauncher<Intent> escolherArquivo = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(), resultado -> {
                 Uri[] uris = WebChromeClient.FileChooserParams.parseResult(resultado.getResultCode(), resultado.getData());
+                // Foto tirada na hora pela câmera: o arquivo vem no endereço que reservamos.
+                if ((uris == null || uris.length == 0) && resultado.getResultCode() == RESULT_OK
+                        && fotoCameraArquivo != null && fotoCameraArquivo.length() > 0) {
+                    uris = new Uri[]{fotoCamera};
+                }
                 if (retornoArquivo != null) retornoArquivo.onReceiveValue(uris);
                 retornoArquivo = null;
+                fotoCamera = null;
+                fotoCameraArquivo = null;
             });
 
     /** Salvar o backup onde o usuário escolher (Downloads, Google Drive...). */
@@ -159,11 +170,37 @@ public class MainActivity extends AppCompatActivity {
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> retorno, FileChooserParams params) {
                 if (retornoArquivo != null) retornoArquivo.onReceiveValue(null);
                 retornoArquivo = retorno;
+                String[] tipos = params.getAcceptTypes();
+                boolean imagem = tipos != null && tipos.length > 0 && tipos[0] != null && tipos[0].startsWith("image");
                 Intent abrir = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 abrir.addCategory(Intent.CATEGORY_OPENABLE);
-                abrir.setType("*/*");
+                abrir.setType(imagem ? "image/*" : "*/*");
+                Intent escolha = abrir;
+                fotoCamera = null;
+                fotoCameraArquivo = null;
+                if (imagem) {
+                    // Oferece a câmera junto com a galeria.
+                    try {
+                        File pasta = new File(getCacheDir(), "camera");
+                        if (!pasta.exists()) pasta.mkdirs();
+                        File[] antigas = pasta.listFiles();
+                        if (antigas != null) for (File f : antigas) f.delete();
+                        File arquivo = new File(pasta, "foto-" + System.currentTimeMillis() + ".jpg");
+                        Uri uri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".arquivos", arquivo);
+                        Intent camera = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                        camera.putExtra(MediaStore.EXTRA_OUTPUT, uri);
+                        camera.setClipData(ClipData.newRawUri("foto", uri));
+                        camera.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        escolha = Intent.createChooser(abrir, "Foto do corpo");
+                        escolha.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{camera});
+                        fotoCamera = uri;
+                        fotoCameraArquivo = arquivo;
+                    } catch (Exception ignored) {
+                        escolha = abrir;
+                    }
+                }
                 try {
-                    escolherArquivo.launch(abrir);
+                    escolherArquivo.launch(escolha);
                 } catch (ActivityNotFoundException e) {
                     retornoArquivo = null;
                     return false;
@@ -265,6 +302,53 @@ public class MainActivity extends AppCompatActivity {
                     return false;
                 }
             }
+        }
+
+        private File arquivoFoto(String id) {
+            if (id == null || !id.matches("[A-Za-z0-9]{4,40}")) return null;
+            File pasta = new File(getFilesDir(), "fotos");
+            if (!pasta.exists()) pasta.mkdirs();
+            return new File(pasta, id + ".jpg");
+        }
+
+        /** Grava uma foto do corpo (JPEG em base64) num arquivo privado do app. */
+        @JavascriptInterface
+        public boolean savePhoto(String id, String base64) {
+            File f = arquivoFoto(id);
+            if (f == null) return false;
+            AtomicFile af = new AtomicFile(f);
+            FileOutputStream out = null;
+            try {
+                out = af.startWrite();
+                out.write(Base64.decode(base64, Base64.DEFAULT));
+                af.finishWrite(out);
+                return true;
+            } catch (Exception e) {
+                if (out != null) af.failWrite(out);
+                return false;
+            }
+        }
+
+        /** Lê uma foto do corpo; devolve base64 ou "" se não existir. */
+        @JavascriptInterface
+        public String loadPhoto(String id) {
+            File f = arquivoFoto(id);
+            if (f == null || !f.exists()) return "";
+            try (InputStream in = new AtomicFile(f).openRead()) {
+                ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                byte[] bloco = new byte[16384];
+                int n;
+                while ((n = in.read(bloco)) > 0) buf.write(bloco, 0, n);
+                return Base64.encodeToString(buf.toByteArray(), Base64.NO_WRAP);
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        @JavascriptInterface
+        public void deletePhoto(String id) {
+            File f = arquivoFoto(id);
+            if (f != null) new AtomicFile(f).delete();
         }
 
         /** Abre o compartilhamento do Android (WhatsApp, e-mail...) com o relatório em PDF. */

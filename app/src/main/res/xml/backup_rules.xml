@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Backup automático do Google (Android 11 ou anterior): só os prontuários.
+     As fotos ficam de fora porque o Android limita esse backup a 25 MB;
+     para guardá-las, use "Exportar backup" no app. -->
+<full-backup-content>
+    <include domain="file" path="pacientes.json" />
+</full-backup-content>

@@ -193,6 +193,22 @@ legend{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--
 .check{display:flex;align-items:center;gap:10px;min-height:44px;font-weight:600;cursor:pointer}
 .check input{width:20px;height:20px;accent-color:var(--brand)}
 .ready{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:16px;padding:14px;border:1px solid var(--brand);border-radius:var(--r);background:var(--surface)}
+.fotos-row,.fotos-edit{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.fotos-row figure,.fpair figure{margin:0;display:flex;flex-direction:column;gap:4px;min-width:0}
+.fotos-row img,.fpair img,.fbox img{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:10px;background:var(--surface-2);cursor:zoom-in;display:block}
+.fotos-row figcaption,.fpair figcaption{font-size:12px;color:var(--muted);text-align:center;font-family:var(--mono)}
+.fvazio{width:100%;aspect-ratio:3/4;border-radius:10px;background:var(--surface-2);display:grid;place-items:center;color:var(--muted);font-size:12px;text-align:center;padding:6px}
+.fcomp{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:16px}
+.fcomp > div{display:flex;flex-direction:column;gap:6px;min-width:0}
+.fpair{display:grid;gap:8px}
+.ftile{display:flex;flex-direction:column;gap:6px;align-items:flex-start;min-width:0}
+.fbox{width:100%;aspect-ratio:3/4;border:1.5px dashed var(--line);border-radius:10px;display:grid;place-items:center;color:var(--muted);font-size:13px;overflow:hidden;background:var(--surface)}
+.fbox img{border-radius:0;height:100%}
+.ftile .btn.sm{padding:4px 8px}
+.viewer{position:fixed;inset:0;z-index:90;background:rgba(5,10,8,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px))}
+.viewer img{max-width:100%;max-height:82vh;object-fit:contain;border-radius:8px}
+.viewer p{color:#e5ede9;margin:0;font-size:14px}
+.viewer .btn{align-self:flex-end}
 .settings{margin-top:22px;padding-top:14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
 .settings p{font-size:12.5px;color:var(--muted);margin:0}
 @media (prefers-reduced-motion:no-preference){.sheet{animation:up .22s ease-out}@keyframes up{from{transform:translateY(24px);opacity:.6}to{transform:none;opacity:1}}}
@@ -352,6 +368,7 @@ const ANTRO_FIELDS = [
   {k: "d_biceps", l: "Bicipital", u: "mm", t: "number"},
   {k: "d_panturrilha", l: "Panturrilha medial", u: "mm", t: "number"},
   {hint: "% de gordura por Jackson & Pollock (7 dobras; ou 3 dobras — homens: peitoral, abdominal, coxa; mulheres: tricipital, suprailíaca, coxa) com equação de Siri. TMB por Cunningham quando há massa magra, senão Mifflin-St Jeor."},
+  {fotos: true},
   {k: "obs", l: "Observações", t: "textarea", wide: true},
 ];
 const BIO_FIELDS = [
@@ -391,6 +408,7 @@ const store = {
     let id = null; try { id = user ? await user.id() : null; } catch (e) {}
     if (db && id) {
       this.col = db.collection("data/users/" + id + "/pacientes");
+      this.fotosCol = db.collection("data/users/" + id + "/fotos");
       try { const snap = await this.col.get(); this.cache = snap.docs.filter(d => d.exists).map(d => JSON.parse(JSON.stringify(d.data()))); this.mode = "db"; return; }
       catch (e) { console.warn("db indisponível", e); }
     }
@@ -473,6 +491,7 @@ function renderDetail() {
     </div>
     <div class="tabs" role="tablist">${tabs.map(([k, l, c]) => `<button class="tab" role="tab" aria-selected="${state.tab === k}" data-tab="${k}" type="button">${l}${c != null ? `<span class="n">${c}</span>` : ""}</button>`).join("")}</div>
     ${body}`;
+  hydrateFotos(dp);
 }
 
 function viewRecords(kind, list, fn) {
@@ -505,6 +524,7 @@ function viewAntro(r, p) {
     <div class="row" style="margin-top:8px">${chip(imcClass(c.imc))} ${chip(rcqClass(c.rcq, p.sexo))} ${c.pg != null ? chip(pgClass(c.pg, p.sexo)) : ""}${c.protocolo ? `<span class="count">${esc(c.protocolo)}</span>` : ""}</div>
     ${circ ? `<div class="section-title" style="margin:14px 0 0">Circunferências</div><div class="rec-grid">${circ}</div>` : ""}
     ${dob ? `<div class="section-title" style="margin:14px 0 0">Dobras cutâneas</div><div class="rec-grid">${dob}</div>` : ""}
+    ${fotosLinhaHTML(r)}
     ${r.obs ? `<p>${esc(r.obs)}</p>` : ""}</article>`;
 }
 function viewBio(r) {
@@ -565,6 +585,7 @@ function viewResumo(p, A, T, B) {
     .sort((a, b) => (b.d || "").localeCompare(a.d || ""));
   return `${T.length || B.length ? `<div class="report-bar"><p><b>Relatório para o paciente.</b> Gráfico e orientação de cada dado, com seu logo e contato, em PDF.</p><button class="btn primary" data-act="report" type="button">Gerar relatório PDF</button></div>` : ""}
     <div class="kpis">${kpis}</div>
+    ${fotosComparacaoHTML(p)}
     ${metricCardsHTML(p)}
     ${cmp}
     <div class="section-title">Histórico de atendimentos</div>
@@ -914,6 +935,35 @@ async function gerarPdf(p, grupos, obs) {
     y += 6;
   });
 
+  // ----- registro fotográfico
+  const comFotos = grupos.includes("fotos") ? avaliacoesComFotos(p) : [];
+  if (comFotos.length) {
+    const sel = comFotos.length > 1 ? [comFotos[0], comFotos[comFotos.length - 1]] : [comFotos[0]];
+    if (y > 120) newPage();
+    T("Registro fotográfico", M, y + 13, 12.5, FB, C.verde); line(M, y + 19, W - M, y + 19, C.verde, .8); y += 30;
+    T(sel.length > 1 ? "Comparação entre a primeira e a avaliação mais recente com fotos." : "Fotos da avaliação.", M, y + 8, 9, F, C.suave); y += 20;
+    const gapc = 12, colW = (CW - 2 * gapc) / 3, boxH = Math.min(colW * 4 / 3, (BOTTOM - y - sel.length * 46) / sel.length);
+    for (const r of sel) {
+      const c = calcAntro(r, p), dt = fdate(r.data);
+      T(dt, M, y + 10, 10, FB, C.tinta);
+      const info = [n(r.peso) != null ? fmt(n(r.peso)) + " kg" : "", c.pg != null ? fmt(c.pg) + "% de gordura" : "", n(r.c_cintura) != null ? "cintura " + fmt(n(r.c_cintura)) + " cm" : ""].filter(Boolean).join(" · ");
+      if (info) T(info, M + TW(dt, 10, FB) + 10, y + 10, 9, F, C.suave);
+      y += 16;
+      for (let i = 0; i < 3; i++) {
+        const [k, l] = POSES[i], x = M + i * (colW + gapc);
+        rect(x, y, colW, boxH, C.fundo);
+        const url = r.fotos && r.fotos[k] ? await fotos.get(r.fotos[k]) : null;
+        if (url) {
+          try { const img = await pdf.embedJpg(url); const sc = Math.min(colW / img.width, boxH / img.height), w = img.width * sc, h = img.height * sc;
+            page.drawImage(img, {x: x + (colW - w) / 2, y: H - y - (boxH + h) / 2, width: w, height: h}); }
+          catch (e) { T("Foto indisponível", x + colW / 2 - TW("Foto indisponível", 8.5) / 2, y + boxH / 2, 8.5, F, C.suave); }
+        } else T("Sem foto", x + colW / 2 - TW("Sem foto", 8.5) / 2, y + boxH / 2, 8.5, F, C.suave);
+        T(l, x, y + boxH + 12, 8.5, FB, C.verde);
+      }
+      y += boxH + 30;
+    }
+  }
+
   // ----- orientações finais e assinatura
   const obsLines = obs && obs.trim() ? wrap(obs.trim(), 9.5, CW - 28) : [];
   const fimH = (obsLines.length ? 40 + obsLines.length * 13.5 : 0) + 150;
@@ -944,6 +994,7 @@ async function gerarPdf(p, grupos, obs) {
 
 function openReport(p) {
   const grupos = GRUPOS.filter(([g]) => metricsFor(p, [g]).length);
+  if (avaliacoesComFotos(p).length) grupos.push(["fotos", "Fotos do corpo (primeira e última avaliação)"]);
   if (!grupos.length) return toast("Registre uma avaliação antes de gerar o relatório");
   const isApp = !!window.AndroidApp;
   const bg = document.createElement("div"); bg.className = "sheet-bg";
@@ -951,7 +1002,7 @@ function openReport(p) {
     <div class="sheet-head"><button class="btn sm ghost" type="button" data-x>Fechar</button><h3>Relatório em PDF</h3><span style="width:60px"></span></div>
     <div class="sheet-body">
       <p class="hint" style="margin:6px 0 0">O relatório traz o seu logo, o resumo da evolução, um gráfico com orientação para cada dado e o seu contato de WhatsApp no rodapé de todas as páginas.</p>
-      <fieldset><legend>Incluir no relatório</legend><div class="checks">${grupos.map(([g, t]) => `<label class="check" for="rg_${g}"><input type="checkbox" id="rg_${g}" value="${g}" checked> ${esc(t)} <span class="count">(${metricsFor(p, [g]).length})</span></label>`).join("")}</div></fieldset>
+      <fieldset><legend>Incluir no relatório</legend><div class="checks">${grupos.map(([g, t]) => `<label class="check" for="rg_${g}"><input type="checkbox" id="rg_${g}" value="${g}" checked> ${esc(t)} <span class="count">(${g === "fotos" ? avaliacoesComFotos(p).length + " com fotos" : metricsFor(p, [g]).length})</span></label>`).join("")}</div></fieldset>
       <fieldset><legend>Orientações finais para o paciente</legend><div class="f wide"><label for="r_obs">Aparecem no fim do relatório, antes da assinatura (opcional)</label>
         <textarea id="r_obs" placeholder="Ex.: manter a proteína distribuída em 4 refeições e reforçar a hidratação nos treinos longos.">${esc(p.obsRelatorio || "")}</textarea></div></fieldset>
       <p class="err" id="rerr" hidden></p>
@@ -999,10 +1050,125 @@ function openReport(p) {
   });
 }
 
+/* ---------- fotos do corpo (frente, costas, lateral) ---------- */
+const POSES = [["frente", "Frente"], ["costas", "Costas"], ["lateral", "Lateral"]];
+const idbFotos = {
+  _db: null,
+  open() { return this._db || (this._db = new Promise((res, rej) => { const r = indexedDB.open("acomp-fotos", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("f"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); })); },
+  async run(mode, fn) { const d = await this.open(); return new Promise((res, rej) => { const q = fn(d.transaction("f", mode).objectStore("f")); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
+  get(k) { return this.run("readonly", s => s.get(k)); }, put(k, v) { return this.run("readwrite", s => s.put(v, k)); }, del(k) { return this.run("readwrite", s => s.delete(k)); }
+};
+const fotos = {
+  cache: new Map(),
+  async get(id) {
+    if (!id) return null; if (this.cache.has(id)) return this.cache.get(id);
+    let url = null;
+    try {
+      if (store.mode === "db") { const s = await store.fotosCol.doc(id).get(); url = s.exists ? s.data().data : null; }
+      else if (store.mode === "device") { const b = AndroidApp.loadPhoto(id); url = b ? "data:image/jpeg;base64," + b : null; }
+      else url = (await idbFotos.get(id)) || null;
+    } catch (e) { url = null; }
+    if (url) this.cache.set(id, url); return url;
+  },
+  async put(id, url) {
+    if (store.mode === "db") await store.fotosCol.doc(id).set({data: url, criado: new Date().toISOString()});
+    else if (store.mode === "device") { if (!AndroidApp.savePhoto(id, url.split(",")[1])) throw new Error("o aparelho não permitiu gravar a foto"); }
+    else await idbFotos.put(id, url);
+    this.cache.set(id, url);
+  },
+  async del(id) {
+    if (!id) return; this.cache.delete(id);
+    try { if (store.mode === "db") await store.fotosCol.doc(id).delete(); else if (store.mode === "device") AndroidApp.deletePhoto(id); else await idbFotos.del(id); } catch (e) {}
+  }
+};
+const idsFotos = r => Object.values((r && r.fotos) || {}).filter(Boolean);
+const idsFotosPaciente = p => (p.antropometrias || []).flatMap(idsFotos);
+const avaliacoesComFotos = p => (p.antropometrias || []).filter(r => idsFotos(r).length).sort((a, b) => (a.data || "").localeCompare(b.data || ""));
+
+/** Reduz a foto (até ~1100 px, JPEG) para caber no armazenamento sem perder nitidez para comparação. */
+async function prepararFoto(file) {
+  if (!file || !/^image\//.test(file.type || "image/")) throw new Error("escolha um arquivo de imagem");
+  const src = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("não foi possível ler a imagem")); i.src = src; });
+    let max = 1100, q = .82, out = "";
+    for (let k = 0; k < 7; k++) {
+      const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(img.naturalWidth * s)); c.height = Math.max(1, Math.round(img.naturalHeight * s));
+      const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+      out = c.toDataURL("image/jpeg", q); if (out.length <= 235000) break;
+      q = Math.max(.5, q - .08); max = Math.round(max * .87);
+    }
+    return out;
+  } finally { URL.revokeObjectURL(src); }
+}
+function hydrateFotos(root) {
+  (root || document).querySelectorAll("img[data-foto]:not([data-ok])").forEach(img => {
+    img.dataset.ok = "1";
+    fotos.get(img.dataset.foto).then(u => { if (u) img.src = u; else img.replaceWith(Object.assign(document.createElement("div"), {className: "fvazio", textContent: "Foto indisponível"})); });
+  });
+}
+function abrirFoto(src, legenda) {
+  const v = document.createElement("div"); v.className = "viewer"; v.setAttribute("role", "dialog"); v.setAttribute("aria-label", legenda || "Foto");
+  v.innerHTML = `<button class="btn sm" type="button" data-x>Fechar</button><img alt=""><p></p>`;
+  v.querySelector("img").src = src; v.querySelector("p").textContent = legenda || "";
+  v.addEventListener("click", () => v.remove()); document.body.appendChild(v);
+}
+function fotosLinhaHTML(r) {
+  if (!idsFotos(r).length) return "";
+  return `<div class="section-title" style="margin:14px 0 6px">Fotos do corpo</div><div class="fotos-row">` + POSES.map(([k, l]) =>
+    `<figure>${r.fotos[k] ? `<img data-foto="${esc(r.fotos[k])}" alt="${l} em ${fdate(r.data)}">` : `<div class="fvazio">Sem foto</div>`}<figcaption>${l}</figcaption></figure>`).join("") + `</div>`;
+}
+function fotosComparacaoHTML(p) {
+  const av = avaliacoesComFotos(p); if (!av.length) return "";
+  const sel = av.length > 1 ? [av[0], av[av.length - 1]] : [av[0]];
+  return `<div class="section-title">Fotos do corpo</div><div class="card"><p class="count" style="margin:0 0 10px">${sel.length > 1 ? "Primeira e última avaliação com fotos. Toque numa foto para ampliar." : "Fotos da avaliação. A comparação aparece a partir da segunda avaliação com fotos."}</p><div class="fcomp">` +
+    POSES.map(([k, l]) => `<div><b>${l}</b><div class="fpair" style="grid-template-columns:repeat(${sel.length},1fr)">${sel.map(r =>
+      `<figure>${r.fotos && r.fotos[k] ? `<img data-foto="${esc(r.fotos[k])}" alt="${l} em ${fdate(r.data)}">` : `<div class="fvazio">Sem foto</div>`}<figcaption>${fdate(r.data)}</figcaption></figure>`).join("")}</div></div>`).join("") + `</div></div>`;
+}
+/** Editor das 3 fotos dentro do formulário de antropometria. As mudanças só são gravadas ao salvar. */
+function editorFotos(container, rec) {
+  const st = {}; POSES.forEach(([k]) => st[k] = {id: (rec.fotos || {})[k] || null, url: null, novo: false, removido: false});
+  const draw = () => {
+    container.innerHTML = POSES.map(([k, l]) => { const s = st[k], tem = (s.novo && s.url) || (s.id && !s.removido);
+      return `<div class="ftile"><div class="fbox">${s.novo ? `<img src="${s.url}" alt="${l}">` : tem ? `<img data-foto="${esc(s.id)}" alt="${l}">` : `<span>${l}</span>`}</div>
+        <b>${l}</b>
+        <input type="file" accept="image/*" id="foto_${k}" hidden>
+        <div class="row" style="gap:6px"><button class="btn sm" type="button" data-pick="${k}">${tem ? "Trocar" : "Adicionar"}</button>${tem ? `<button class="btn sm ghost" type="button" data-rm="${k}">Remover</button>` : ""}</div></div>`; }).join("");
+    hydrateFotos(container);
+  };
+  container.addEventListener("click", e => {
+    const pk = e.target.closest("[data-pick]"); if (pk) { container.querySelector("#foto_" + pk.dataset.pick).click(); return; }
+    const rm = e.target.closest("[data-rm]"); if (rm) { const s = st[rm.dataset.rm]; s.novo = false; s.url = null; s.removido = true; draw(); return; }
+    const im = e.target.closest(".fbox img"); if (im && im.src) abrirFoto(im.src, im.alt);
+  });
+  container.addEventListener("change", async e => {
+    const inp = e.target.closest("input[type=file]"); if (!inp) return; e.stopPropagation();
+    const k = inp.id.replace("foto_", ""), f = inp.files[0]; inp.value = ""; if (!f) return;
+    const box = container.querySelectorAll(".fbox")[POSES.findIndex(([x]) => x === k)]; if (box) box.innerHTML = "<span>Processando…</span>";
+    try { st[k].url = await prepararFoto(f); st[k].novo = true; st[k].removido = false; } catch (err) { toast("Foto não carregada: " + (err.message || err)); }
+    draw();
+  });
+  draw();
+  return {
+    /** Grava as fotos novas e devolve {fotos, apagar}: o mapa final e os ids antigos a apagar depois de salvar a avaliação. */
+    async commit() {
+      const final = {}, apagar = [];
+      for (const [k] of POSES) { const s = st[k];
+        if (s.novo && s.url) { const id = uid(); await fotos.put(id, s.url); final[k] = id; if (s.id) apagar.push(s.id); }
+        else if (s.removido) { if (s.id) apagar.push(s.id); }
+        else if (s.id) final[k] = s.id; }
+      return {fotos: final, apagar};
+    }
+  };
+}
+
 /* ---------- formulário ---------- */
 function fieldHTML(f, v) {
   if (f.legend) return `</div></fieldset><fieldset><legend>${esc(f.legend)}</legend><div class="grid">`;
   if (f.hint) return `<p class="hint f wide">${esc(f.hint)}</p>`;
+  if (f.fotos) return `</div></fieldset><fieldset><legend>Fotos do corpo</legend><p class="hint" style="margin:0 0 10px">Frente, costas e lateral. Para comparar melhor: mesmo local, mesma distância, boa luz, corpo inteiro e roupa de treino.</p><div class="fotos-edit" id="fotosEdit"></div></fieldset><fieldset><div class="grid">`;
   const id = "f_" + f.k, lab = `<label for="${id}">${esc(f.l)}${f.req ? " *" : ""}${f.u ? ` <span class="u">(${esc(f.u)})</span>` : ""}</label>`;
   const val = v ?? "";
   let inp;
@@ -1032,6 +1198,7 @@ function openForm(kind, rec) {
   bg.querySelector("[data-x]").onclick = close;
   bg.addEventListener("click", e => { if (e.target === bg) close(); });
   bg.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
+  const edFotos = kind === "antro" ? editorFotos(form.querySelector("#fotosEdit"), rec) : null;
   if (kind === "antro") {
     const live = () => { const c = calcAntro(read(), p || {}); const L = (l, v) => `<div><div class="l">${l}</div><div class="v">${v}</div></div>`;
       $("#live").innerHTML = L("IMC", fmt(c.imc)) + L("% Gordura", c.pg != null ? fmt(c.pg) + "%" : "—") + L("Massa magra", c.mlg ? fmt(c.mlg) + " kg" : "—") + L("RCQ", fmt(c.rcq, 2)) + L("TMB", fmt(c.tmbCunningham || c.tmbMifflin, 0)) + L("GET", c.get ? fmt(c.get, 0) : "—"); };
@@ -1041,7 +1208,7 @@ function openForm(kind, rec) {
   if (del) del.onclick = async () => {
     if (!del.classList.contains("armed")) { del.classList.add("armed"); del.textContent = "Toque de novo para excluir"; setTimeout(() => { del.classList.remove("armed"); del.textContent = "Excluir registro"; }, 4000); return; }
     p[ARR[kind]] = (p[ARR[kind]] || []).filter(x => x.id !== rec.id);
-    try { await store.save(p); close(); toast("Registro excluído"); render(); } catch (e) { showErr("Não foi possível excluir: " + (e.message || e)); }
+    try { await store.save(p); for (const id of idsFotos(rec)) await fotos.del(id); close(); toast("Registro excluído"); render(); } catch (e) { showErr("Não foi possível excluir: " + (e.message || e)); }
   };
   const showErr = m => { const er = $("#ferr"); er.textContent = m; er.hidden = false; er.scrollIntoView({block: "nearest"}); };
   form.addEventListener("submit", async e => {
@@ -1051,8 +1218,10 @@ function openForm(kind, rec) {
     try {
       if (kind === "pac") { const pac = isNew ? {id: uid(), criado: new Date().toISOString(), anamneses: [], antropometrias: [], bioimpedancias: []} : store.get(rec.id);
         Object.assign(pac, o); delete pac.exemplo; await store.save(pac); state.sel = pac.id; if (isNew) state.tab = "resumo"; }
-      else { o.id = o.id || uid(); const arr = p[ARR[kind]] = p[ARR[kind]] || []; const i = arr.findIndex(x => x.id === o.id); if (i >= 0) arr[i] = o; else arr.push(o);
-        await store.save(p); state.tab = kind === "antro" ? "antropometria" : kind; }
+      else { o.id = o.id || uid(); let apagar = [];
+        if (edFotos) { const r = await edFotos.commit(); apagar = r.apagar; if (Object.keys(r.fotos).length) o.fotos = r.fotos; else delete o.fotos; }
+        const arr = p[ARR[kind]] = p[ARR[kind]] || []; const i = arr.findIndex(x => x.id === o.id); if (i >= 0) arr[i] = o; else arr.push(o);
+        await store.save(p); for (const id of apagar) await fotos.del(id); state.tab = kind === "antro" ? "antropometria" : kind; }
       close(); toast(isNew ? "Salvo" : "Alterações salvas"); render();
     } catch (err) { showErr("Não foi possível salvar: " + (err.message || err)); }
   });
@@ -1075,7 +1244,9 @@ function samplePatient() {
 
 /* ---------- backup ---------- */
 async function exportBackup() {
-  const data = JSON.stringify({app: "Acompanhamento Nutricional", versao: 1, exportado: new Date().toISOString(), pacientes: store.cache}, null, 2);
+  const todasFotos = {};
+  for (const p of store.cache) for (const id of idsFotosPaciente(p)) { const u = await fotos.get(id); if (u) todasFotos[id] = u; }
+  const data = JSON.stringify({app: "Acompanhamento Nutricional", versao: 2, exportado: new Date().toISOString(), pacientes: store.cache, fotos: todasFotos});
   if (window.AndroidApp) {
     window.__backupResult = r => toast(r === "ok" ? "Backup salvo" : r === "cancel" ? "Backup cancelado" : "Não foi possível salvar o backup");
     AndroidApp.saveBackup(`backup-acompanhamento-nutricional-${today()}.json`, data);
@@ -1088,7 +1259,8 @@ async function exportBackup() {
 $("#importFile").addEventListener("change", async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
   try { const j = JSON.parse(await f.text()); const list = Array.isArray(j) ? j : j.pacientes; if (!Array.isArray(list)) throw new Error("arquivo sem lista de pacientes");
-    let added = 0; for (const p of list) { if (!p || !p.id || !p.nome) continue; await store.save(p); added++; }
+    let added = 0, nf = 0; for (const p of list) { if (!p || !p.id || !p.nome) continue; await store.save(p); added++; }
+    if (j.fotos && typeof j.fotos === "object") for (const [id, u] of Object.entries(j.fotos)) { if (/^data:image\/jpeg;base64,/.test(u)) { try { await fotos.put(id, u); nf++; } catch (x) {} } }
     toast(`${added} paciente${added === 1 ? "" : "s"} importado${added === 1 ? "" : "s"}`); render();
   } catch (err) { toast("Arquivo inválido: " + (err.message || err)); }
 });
@@ -1097,6 +1269,7 @@ $("#importFile").addEventListener("change", async e => {
 document.addEventListener("click", async e => {
   const it = e.target.closest(".pitem"); if (it) { state.sel = it.dataset.id; state.tab = "resumo"; render(); window.scrollTo(0, 0); return; }
   const tb = e.target.closest("[data-tab]"); if (tb) { state.tab = tb.dataset.tab; renderDetail(); return; }
+  const fimg = e.target.closest("#detailPane img[data-foto]"); if (fimg && fimg.src) { abrirFoto(fimg.src, fimg.alt); return; }
   const b = e.target.closest("[data-act]"); if (!b) return;
   const act = b.dataset.act, p = state.sel && store.get(state.sel);
   if (act === "new-pac") openForm("pac");
@@ -1110,7 +1283,7 @@ document.addEventListener("click", async e => {
   if (act === "import") $("#importFile").click();
   if (act === "del-pac") {
     if (!b.classList.contains("armed")) { b.classList.add("armed"); b.textContent = `Toque de novo para excluir ${p.nome.split(" ")[0]} e todo o histórico`; setTimeout(() => { if (b.isConnected) { b.classList.remove("armed"); b.textContent = "Excluir paciente"; } }, 5000); return; }
-    try { await store.remove(p.id); state.sel = null; render(); toast("Paciente excluído"); } catch (err) { toast("Não foi possível excluir"); }
+    try { const ids = idsFotosPaciente(p); await store.remove(p.id); for (const id of ids) await fotos.del(id); state.sel = null; render(); toast("Paciente excluído"); } catch (err) { toast("Não foi possível excluir"); }
   }
 });
 document.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.classList && e.target.classList.contains("pitem")) e.target.click(); });
@@ -1122,6 +1295,7 @@ function render() { renderList(); renderDetail();
 
 /* botão "voltar" do Android: fecha o formulário aberto ou volta para a lista */
 window.__androidBack = () => {
+  const viewer = document.querySelector(".viewer"); if (viewer) { viewer.remove(); return true; }
   const sheet = document.querySelector(".sheet-bg");
   if (sheet) { sheet.querySelector("[data-x]").click(); return true; }
   if (state.sel) { state.sel = null; render(); return true; }
