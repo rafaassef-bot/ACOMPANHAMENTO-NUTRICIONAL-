@@ -209,6 +209,15 @@ legend{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--
 .viewer img{max-width:100%;max-height:82vh;object-fit:contain;border-radius:8px}
 .viewer p{color:#e5ede9;margin:0;font-size:14px}
 .viewer .btn{align-self:flex-end}
+.preview{display:flex;flex-direction:column;gap:16px;margin-top:16px}
+.preview figure{margin:0;display:flex;flex-direction:column;gap:6px}
+.preview img{width:100%;height:auto;display:block;border-radius:3px;background:#fff;box-shadow:0 1px 3px rgba(20,40,32,.18),0 8px 22px rgba(20,40,32,.12);cursor:zoom-in}
+.preview figcaption{font-size:12px;color:var(--muted);text-align:center;font-family:var(--mono)}
+.preview-note{margin:0;padding:14px;border-radius:var(--r);background:var(--surface-2);color:var(--muted);font-size:13.5px;text-align:center}
+.pview{position:fixed;inset:0;z-index:95;background:rgba(5,10,8,.95);overflow:auto;-webkit-overflow-scrolling:touch}
+.pview .bar{position:sticky;top:0;left:0;z-index:1;display:flex;justify-content:space-between;align-items:center;gap:10px;width:100vw;padding:calc(10px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 10px max(16px,env(safe-area-inset-left,0px));background:rgba(5,10,8,.88);color:#e5ede9;font-size:14px}
+.pview .btn{color:var(--fg);background:var(--surface)}
+.pview img{display:block;width:max(100vw,1000px);max-width:none;height:auto;margin:0 auto;background:#fff}
 .settings{margin-top:22px;padding-top:14px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
 .settings p{font-size:12.5px;color:var(--muted);margin:0}
 @media (prefers-reduced-motion:no-preference){.sheet{animation:up .22s ease-out}@keyframes up{from{transform:translateY(24px);opacity:.6}to{transform:none;opacity:1}}}
@@ -992,6 +1001,53 @@ async function gerarPdf(p, grupos, obs) {
   return pdf.save();
 }
 
+/* ---------- pré-visualização do PDF (pdf.js, funciona sem internet) ---------- */
+let pdfjsPromise = null;
+const PDFJS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+function loadPdfJs() {
+  if (!pdfjsPromise) pdfjsPromise = (window.AndroidApp
+    // aplicativo Android: visualizador incluído no próprio app (funciona sem internet)
+    ? import(new URL("pdfjs.min.js", location.href).href).then(m => { m.GlobalWorkerOptions.workerSrc = new URL("pdfjs.worker.min.js", location.href).href; return m; })
+    // versão claude.ai: visualizador carregado do cdnjs
+    : new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = PDFJS_CDN + "pdf.min.js";
+        sc.onload = () => { const m = window.pdfjsLib; if (!m) return rej(new Error("visualizador indisponível")); m.GlobalWorkerOptions.workerSrc = PDFJS_CDN + "pdf.worker.min.js"; res(m); };
+        sc.onerror = () => rej(new Error("visualizador indisponível")); document.head.appendChild(sc); }))
+    .catch(e => { pdfjsPromise = null; throw e; });
+  return pdfjsPromise;
+}
+/** Desenha cada página do PDF como imagem dentro de `box`. Para no meio se `vigente()` ficar falso (relatório refeito ou tela fechada). */
+async function renderPreview(bytes, box, vigente, urls) {
+  const pdfjs = await loadPdfJs();
+  const opts = {data: bytes.slice()}; if (window.AndroidApp) opts.standardFontDataUrl = new URL("standard_fonts/", location.href).href;
+  const tarefa = pdfjs.getDocument(opts);
+  const doc = await tarefa.promise;
+  try {
+    const alvo = Math.min(1500, Math.max(1100, Math.round(box.clientWidth * (window.devicePixelRatio || 1))));
+    for (let i = 1; i <= doc.numPages; i++) {
+      if (!vigente()) return;
+      const pg = await doc.getPage(i), vp0 = pg.getViewport({scale: 1}), vp = pg.getViewport({scale: alvo / vp0.width});
+      const c = document.createElement("canvas"); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
+      await pg.render({canvasContext: ctx, viewport: vp}).promise;
+      const url = await new Promise(r => c.toBlob(b => r(b ? URL.createObjectURL(b) : c.toDataURL("image/jpeg", .88)), "image/jpeg", .88));
+      if (url.startsWith("blob:")) urls.push(url);
+      if (!vigente()) return;
+      const fig = document.createElement("figure");
+      fig.innerHTML = `<img alt="Página ${i} de ${doc.numPages}" data-pg="${i}" data-total="${doc.numPages}"><figcaption>Página ${i} de ${doc.numPages}</figcaption>`;
+      fig.querySelector("img").src = url; box.appendChild(fig);
+      pg.cleanup();
+    }
+  } finally { try { await tarefa.destroy(); } catch (e) {} }
+}
+/** Página ampliada para leitura: rola na horizontal e na vertical. */
+function abrirPagina(img) {
+  const v = document.createElement("div"); v.className = "pview"; v.setAttribute("role", "dialog"); v.setAttribute("aria-label", img.alt);
+  v.innerHTML = `<div class="bar"><span>${esc(img.alt)}</span><button class="btn sm" type="button" data-x>Fechar</button></div><img alt="">`;
+  v.querySelector("img").src = img.src; v.querySelector("img").alt = img.alt;
+  v.querySelector("[data-x]").onclick = () => v.remove();
+  document.body.appendChild(v);
+}
+
 function openReport(p) {
   const grupos = GRUPOS.filter(([g]) => metricsFor(p, [g]).length);
   if (avaliacoesComFotos(p).length) grupos.push(["fotos", "Fotos do corpo (primeira e última avaliação)"]);
@@ -1001,24 +1057,32 @@ function openReport(p) {
   bg.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="Relatório em PDF">
     <div class="sheet-head"><button class="btn sm ghost" type="button" data-x>Fechar</button><h3>Relatório em PDF</h3><span style="width:60px"></span></div>
     <div class="sheet-body">
-      <p class="hint" style="margin:6px 0 0">O relatório traz o seu logo, o resumo da evolução, um gráfico com orientação para cada dado e o seu contato de WhatsApp no rodapé de todas as páginas.</p>
+      <p class="hint" style="margin:6px 0 0">O relatório traz o seu logo, o resumo da evolução, um gráfico com orientação para cada dado e o seu contato de WhatsApp no rodapé de todas as páginas. Gere a pré-visualização para conferir as páginas antes de enviar.</p>
       <fieldset><legend>Incluir no relatório</legend><div class="checks">${grupos.map(([g, t]) => `<label class="check" for="rg_${g}"><input type="checkbox" id="rg_${g}" value="${g}" checked> ${esc(t)} <span class="count">(${g === "fotos" ? avaliacoesComFotos(p).length + " com fotos" : metricsFor(p, [g]).length})</span></label>`).join("")}</div></fieldset>
       <fieldset><legend>Orientações finais para o paciente</legend><div class="f wide"><label for="r_obs">Aparecem no fim do relatório, antes da assinatura (opcional)</label>
         <textarea id="r_obs" placeholder="Ex.: manter a proteína distribuída em 4 refeições e reforçar a hidratação nos treinos longos.">${esc(p.obsRelatorio || "")}</textarea></div></fieldset>
       <p class="err" id="rerr" hidden></p>
       <div class="ready" id="rready" hidden></div>
+      <div class="preview" id="rprev" aria-live="polite"></div>
     </div>
-    <div class="sheet-foot"><span></span><button class="btn primary" type="button" id="rgen">Gerar PDF</button></div></div>`;
+    <div class="sheet-foot"><button class="btn primary" type="button" id="rgen">Gerar e visualizar</button><span class="row" id="racts"></span></div></div>`;
   document.body.appendChild(bg); document.body.style.overflow = "hidden";
-  const close = () => { bg.remove(); document.body.style.overflow = ""; };
+  const err = bg.querySelector("#rerr"), ready = bg.querySelector("#rready"), gen = bg.querySelector("#rgen"), prev = bg.querySelector("#rprev"), acts = bg.querySelector("#racts");
+  const nome = `Relatorio-evolucao-${slug(p.nome)}-${today()}.pdf`;
+  let bytes = null, versao = 0; const urls = [];
+  const limparPrevia = () => { versao++; urls.splice(0).forEach(u => URL.revokeObjectURL(u)); prev.innerHTML = ""; };
+  const close = () => { limparPrevia(); bg.remove(); document.body.style.overflow = ""; };
   bg.querySelector("[data-x]").onclick = close;
   bg.addEventListener("click", e => { if (e.target === bg) close(); });
   bg.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
-  const err = bg.querySelector("#rerr"), ready = bg.querySelector("#rready"), gen = bg.querySelector("#rgen");
-  const nome = `Relatorio-evolucao-${slug(p.nome)}-${today()}.pdf`;
-  let bytes = null;
+  // Mudou alguma opção depois de gerar: a prévia deixa de valer, para que o enviado seja sempre o que foi visto.
+  const invalidar = () => { if (!bytes) return; bytes = null; limparPrevia(); ready.hidden = true; acts.innerHTML = "";
+    gen.className = "btn primary"; gen.textContent = "Gerar e visualizar"; };
+  bg.querySelectorAll(".checks input").forEach(i => i.addEventListener("change", invalidar));
+  bg.querySelector("#r_obs").addEventListener("input", invalidar);
+
   gen.onclick = async () => {
-    err.hidden = true; ready.hidden = true;
+    err.hidden = true; ready.hidden = true; acts.innerHTML = ""; limparPrevia(); bytes = null;
     const sel = [...bg.querySelectorAll(".checks input:checked")].map(i => i.value);
     if (!sel.length) { err.textContent = "Marque pelo menos um grupo de dados."; err.hidden = false; return; }
     const obs = bg.querySelector("#r_obs").value;
@@ -1029,13 +1093,21 @@ function openReport(p) {
       const kb = Math.max(1, Math.round(bytes.length / 1024));
       const pagesN = (await (await loadPdfLib()).PDFDocument.load(bytes)).getPageCount();
       ready.innerHTML = `<div><b>Relatório pronto</b><div class="count">${pagesN} página${pagesN === 1 ? "" : "s"} · ${kb} KB · ${esc(nome)}</div></div>
-        <div class="row">${isApp ? `<button class="btn primary" type="button" data-r="share">Enviar (WhatsApp, e-mail…)</button><button class="btn" type="button" data-r="save">Salvar no aparelho</button>`
-          : `<button class="btn primary" type="button" data-r="download">Baixar PDF</button>`}</div>`;
-      ready.hidden = false; ready.scrollIntoView({block: "nearest"});
-    } catch (e) { err.textContent = "Não foi possível gerar o PDF: " + (e.message || e); err.hidden = false; }
-    gen.disabled = false; gen.textContent = "Gerar de novo";
+        <span class="count">Confira as páginas abaixo. Toque numa página para ampliar.</span>`;
+      ready.hidden = false;
+      acts.innerHTML = isApp ? `<button class="btn" type="button" data-r="save">Salvar</button><button class="btn primary" type="button" data-r="share">Enviar</button>`
+        : `<button class="btn primary" type="button" data-r="download">Baixar PDF</button>`;
+      gen.className = "btn"; gen.textContent = "Gerar de novo";
+      ready.scrollIntoView({block: "start", behavior: "smooth"});
+      const minha = versao, aviso = document.createElement("p"); aviso.className = "preview-note"; aviso.textContent = "Montando a pré-visualização…"; prev.appendChild(aviso);
+      renderPreview(bytes, prev, () => versao === minha, urls)
+        .then(() => { if (versao === minha) aviso.remove(); })
+        .catch(e => { console.warn("pré-visualização:", e && (e.stack || e.message || e)); if (versao === minha) aviso.textContent = "Não foi possível mostrar a pré-visualização neste aparelho. O PDF está pronto: você pode enviar ou salvar normalmente."; });
+    } catch (e) { err.textContent = "Não foi possível gerar o PDF: " + (e.message || e); err.hidden = false; gen.textContent = "Gerar e visualizar"; }
+    gen.disabled = false;
   };
-  ready.addEventListener("click", async e => {
+  prev.addEventListener("click", e => { const im = e.target.closest("img[data-pg]"); if (im) abrirPagina(im); });
+  acts.addEventListener("click", async e => {
     const b = e.target.closest("[data-r]"); if (!b || !bytes) return;
     if (b.dataset.r === "share" || b.dataset.r === "save") {
       window.__pdfResult = r => toast(r === "ok" ? (b.dataset.r === "save" ? "PDF salvo" : "Escolha o app para enviar") : r === "cancel" ? "Cancelado" : "Não foi possível concluir");
@@ -1295,7 +1367,7 @@ function render() { renderList(); renderDetail();
 
 /* botão "voltar" do Android: fecha o formulário aberto ou volta para a lista */
 window.__androidBack = () => {
-  const viewer = document.querySelector(".viewer"); if (viewer) { viewer.remove(); return true; }
+  const viewer = document.querySelector(".pview, .viewer"); if (viewer) { viewer.remove(); return true; }
   const sheet = document.querySelector(".sheet-bg");
   if (sheet) { sheet.querySelector("[data-x]").click(); return true; }
   if (state.sel) { state.sel = null; render(); return true; }
